@@ -1,0 +1,12 @@
+# W+ -> e+ nu_e at LO, 13 TeV.  Sanity run for the sherpa3 build.
+BEAMS: 2212
+BEAM_ENERGIES: 6500
+EVENTS: 1000
+ME_GENERATORS: [Comix]
+PDF_LIBRARY: LHAPDFSherpa
+PDF_SET: NNPDF23_lo_as_0130_qed
+MPI_PDF_LIBRARY: LHAPDFSherpa
+MPI_PDF_SET: NNPDF23_lo_as_0130_qed
+PROCESSES:
+- 93 93 -> -11 12:
+    Order: {QCD: 0, EW: 2}

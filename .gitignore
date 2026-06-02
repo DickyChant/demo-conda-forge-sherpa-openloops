@@ -1,0 +1,19 @@
+# build outputs
+/output/
+*.conda
+*.tar.bz2
+bld/
+
+# SHERPA run artifacts (a run drops these next to the runcard; keep only Sherpa.yaml)
+test/*/Results*
+test/*/References.tex
+test/*/Settings_Report/
+test/*/Process/
+test/*/Analysis/
+test/*/*.zip
+test/*/*.zip~
+test/*/*.db
+test/*/run.log
+test/*/events
+test/*/*.hepmc*
+test/*/*.lhe*

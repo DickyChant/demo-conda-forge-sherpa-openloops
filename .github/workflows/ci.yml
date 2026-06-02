@@ -1,0 +1,98 @@
+name: build-and-verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: openloops -> sherpa3 -> W (LO + NLO)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}        # login shell so the micromamba env is active
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up micromamba (build toolchain)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: >-
+            rattler-build
+            conda-index
+          condarc: |
+            channels: [conda-forge]
+            channel_priority: strict
+
+      # ----------------------------------------------------------------------
+      - name: "Step 1 — build OpenLoops"
+        run: |
+          rattler-build build \
+            --recipe openloops/recipe.yaml \
+            --channel conda-forge \
+            --output-dir ./output
+
+      # ----------------------------------------------------------------------
+      - name: "Step 2 — build sherpa3 (on top of OpenLoops)"
+        run: |
+          rattler-build build \
+            --recipe sherpa3/recipe.yaml \
+            --channel ./output \
+            --channel conda-forge \
+            --output-dir ./output
+
+      # ----------------------------------------------------------------------
+      - name: "Step 3 — verify: W at LO, and OpenLoops builds + loads in sherpa3"
+        run: |
+          python -m conda_index ./output
+          micromamba create -y -n run -c ./output -c conda-forge sherpa3 gxx gfortran
+          micromamba run -n run lhapdf install NNPDF23_lo_as_0130_qed NNPDF30_nlo_as_0118
+
+          echo "::group::W -> e nu at LO  (sherpa3 end-to-end: ME + shower + hadronisation)"
+          ( cd test/W_LO && micromamba run -n run Sherpa -f Sherpa.yaml "EVENTS: 200" )
+          echo "::endgroup::"
+
+          echo "::group::OpenLoops -> compile a W one-loop library and load it in sherpa3"
+          # OpenLoops builds process libraries from its own install tree:
+          micromamba run -n run bash -c 'cd "$CONDA_PREFIX/share/openloops" && openloops libinstall ppllj'
+          # run the NLO W setup far enough to compile + load the OpenLoops one-loop generator
+          ( cd test/W_NLO && micromamba run -n run Sherpa -f Sherpa.yaml "EVENTS: 5" > ol.log 2>&1 || true )
+          if grep -q "using OpenLoops 2" test/W_NLO/ol.log; then
+            echo "PASS: sherpa3 compiled the W one-loop library and loaded the OpenLoops generator."
+          else
+            echo "FAIL: OpenLoops did not initialise:"; tail -40 test/W_NLO/ol.log; exit 1
+          fi
+          echo "::endgroup::"
+          echo "All good: openloops + sherpa3 built; sherpa3 runs W at LO and loads the OpenLoops loop."
+          echo "sherpa3 verified: W produced at LO and NLO (OpenLoops loop)."
+
+      - name: Upload built packages (CI artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conda-packages-linux-64
+          path: output/**/*.conda
+          if-no-files-found: ignore
+
+      # Optional: publish to your anaconda.org channel to circulate the packages.
+      # Enable by adding repo secret ANACONDA_TOKEN (and optional var ANACONDA_OWNER).
+      - name: "Publish to anaconda.org (optional)"
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          ANACONDA_API_KEY: ${{ secrets.ANACONDA_TOKEN }}
+        run: |
+          if [ -z "${ANACONDA_API_KEY:-}" ]; then
+            echo "No ANACONDA_TOKEN secret set — skipping publish."; exit 0
+          fi
+          OWNER="${{ vars.ANACONDA_OWNER || github.repository_owner }}"
+          for pkg in $(find output -name '*.conda'); do
+            echo "uploading $pkg to anaconda.org/$OWNER"
+            rattler-build upload anaconda --force --owner "$OWNER" "$pkg"
+          done
